@@ -1,0 +1,24 @@
+[package]
+name = "anticheat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8.4", features = ["ws"] } # Upgraded to axum 0.8
+tokio = { version = "1.37.0", features = ["full"] }
+tower = "0.5.2" # Upgraded to tower 0.5
+tower-http = { version = "0.6.6", features = ["trace", "cors", "compression-full"] } # Upgraded to tower-http 0.6
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.115"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
+anyhow = "1.0.81"
+thiserror = "2.0.16"
+utoipa = { version = "5.4.0" } # Upgraded to utoipa 5.4.0
+utoipa-axum = { version = "0.2.0" } # Upgraded to utoipa-axum 0.2.0
+chrono = "0.4.34"
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] } # Upgraded to utoipa-swagger-ui 9.0.2
+futures = "0.3.30"
+headers = "0.4.1"
+axum-extra = "0.10.1" # Re-added and upgraded for axum 0.8 compatibility
+async-trait = "0.1"
