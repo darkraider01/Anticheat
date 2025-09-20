@@ -1,134 +1,108 @@
 use axum::{
-    routing::{post, get},
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade}, Extension
-    },
-    response::IntoResponse,
+    extract::{Json, State, Extension},
+    routing::{post},
     Router,
+    http::{StatusCode},
 };
-use axum::http::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use crate::auth::api_key::AgentAuth;
-use axum::extract::Json;
-use validator::{Validate, ValidationErrors, ValidationError, ValidationErrorsKind};
-use futures::StreamExt;
-use tracing::info;
+use validator::Validate;
 
-#[derive(Debug, Deserialize, ToSchema, Validate)]
+use crate::{auth::api_key::AgentAuth, config::AppState};
+use std::collections::HashMap;
+
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct IngestEvent {
+    #[validate(length(min = 1, message = "Event ID cannot be empty"))]
+    pub id: String,
+    #[validate(length(min = 1, message = "Agent ID cannot be empty"))]
+    pub agent_id: String,
+    pub timestamp: String,
     #[validate(length(min = 1, message = "Event type cannot be empty"))]
     pub event_type: String,
-    pub payload: serde_json::Value,
+    pub data: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize, ToSchema, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct IngestBatchRequest {
+    #[validate(length(min = 1, message = "Events list cannot be empty"))]
     pub events: Vec<IngestEvent>,
+    pub metadata: HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct IngestBatchResponse {
+    pub message: String,
+    pub ingested_count: usize,
+    pub failed_count: usize,
 }
 
 #[utoipa::path(
     post,
-    path = "/ingest/batch",
+    path = "/v1/ingest",
     request_body = IngestBatchRequest,
     responses(
-        (status = 202, description = "Batch accepted"),
-        (status = 401, description = "Unauthorized")
+        (status = 200, description = "Batch ingest successful", body = IngestBatchResponse),
+        (status = 400, description = "Invalid ingest request")
     ),
     security(
-        ("apiKeyAuth" = [])
+        ("api_key" = [])
     )
 )]
 pub async fn batch(
+    State(_app_state): State<AppState>, // Accept AppState
     Extension(agent_auth): Extension<AgentAuth>,
     Json(payload): Json<IngestBatchRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    // Validate the incoming batch request
+) -> Result<Json<IngestBatchResponse>, StatusCode> {
     if let Err(e) = payload.validate() {
-        return Err((StatusCode::BAD_REQUEST, e.to_string()));
+        tracing::warn!("Invalid ingest batch request: {:?}", e);
+        return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Filter events based on agent_auth.org_id
-    let scoped_events: Vec<IngestEvent> = payload.events.into_iter().filter(|event| {
-        // Assuming event.payload contains an "org_id" field for filtering
-        // This is a placeholder and needs to be adapted to the actual payload structure
-        if let Some(org_id_value) = event.payload.get("org_id") {
-            if let Some(event_org_id) = org_id_value.as_str() {
-                return event_org_id == agent_auth.org_id;
-            }
-        }
-        // If no org_id in payload, or it doesn't match, filter it out
-        false
-    }).collect();
-
-    if scoped_events.is_empty() {
-        tracing::warn!("No events found for org_id: {}", agent_auth.org_id);
-        return Ok(StatusCode::ACCEPTED);
-    }
-
-    for event in scoped_events {
-        tracing::info!(
-            "Ingesting event for org_id: {}, key_id: {}...{}, event_type: {}",
-            agent_auth.org_id,
-            &agent_auth.key_id[..4],
-            &agent_auth.key_id[agent_auth.key_id.len()-4..],
-            event.event_type
-        );
-        // TODO: Process events, ensuring they are scoped to agent_auth.org_id
-        // The filtering above ensures this, but further processing should respect this scope.
-    }
-
-    Ok(StatusCode::ACCEPTED)
-}
-
-pub async fn ws_agent_ingest(
-    ws: WebSocketUpgrade,
-    Extension(agent_auth): Extension<AgentAuth>,
-) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_agent_ingest_socket(socket, agent_auth))
-}
-
-async fn handle_agent_ingest_socket(mut socket: WebSocket, agent_auth: AgentAuth) {
-    info!(
-        "Agent WebSocket connection established for org_id: {}, key_id: {}...{}",
+    tracing::info!(
+        "Ingest batch from agent {} (org_id: {}) with {} events",
+        agent_auth.key_id,
         agent_auth.org_id,
-        &agent_auth.key_id[..4],
-        &agent_auth.key_id[agent_auth.key_id.len()-4..]
+        payload.events.len()
     );
 
-    while let Some(msg) = socket.recv().await {
-        if let Ok(msg) = msg {
-            match msg {
-                Message::Text(t) => {
-                    info!("Received text message from agent (org_id: {}): {:?}", agent_auth.org_id, t);
-                    // TODO: Process agent text messages (e.g., batched detection events)
-                    // For now, echo back
-                    let _ = socket.send(Message::Text(format!("Agent (Org {}): Received: {}", agent_auth.org_id, t).into())).await;
-                }
-                Message::Binary(b) => {
-                    info!("Received binary message from agent (org_id: {}): {:?}", agent_auth.org_id, b);
-                    // TODO: Process agent binary messages (e.g., heartbeats or other binary data)
-                }
-                Message::Ping(p) => {
-                    info!("Received ping from agent (org_id: {}): {:?}", agent_auth.org_id, p);
-                }
-                Message::Pong(p) => {
-                    info!("Received pong from agent (org_id: {}): {:?}", agent_auth.org_id, p);
-                }
-                Message::Close(c) => {
-                    info!("Agent WebSocket disconnected for org_id: {}: {:?}", agent_auth.org_id, c);
-                    break;
-                }
-            }
-        } else {
-            info!("Agent disconnected for org_id: {}", agent_auth.org_id);
-            return;
+    let mut ingested_count = 0;
+    let mut failed_count = 0;
+
+    for event in payload.events {
+        if event.agent_id != agent_auth.key_id {
+            tracing::warn!(
+                "Event agent_id mismatch: event.agent_id={} != api_key.agent_id={}",
+                event.agent_id,
+                agent_auth.key_id
+            );
+            failed_count += 1;
+            continue;
         }
+        if let Err(e) = event.validate() {
+            tracing::warn!("Invalid event in batch: {:?}", e);
+            failed_count += 1;
+            continue;
+        }
+
+        // Simulate processing and storing the event
+        tracing::debug!(
+            "Ingesting event: id={}, agent_id={}, event_type={}",
+            event.id,
+            event.agent_id,
+            event.event_type
+        );
+        ingested_count += 1;
     }
+
+    Ok(Json(IngestBatchResponse {
+        message: "Batch ingest processed".to_string(),
+        ingested_count,
+        failed_count,
+    }))
 }
 
-pub fn routes() -> Router {
+pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/batch", post(batch))
-        .route("/ws", get(ws_agent_ingest))
+        .route("/ingest", post(batch))
 }

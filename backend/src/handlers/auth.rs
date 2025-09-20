@@ -1,7 +1,16 @@
-use axum::{routing::post, Json, Router};
-use axum::http::StatusCode;
+use axum::{
+    routing::post,
+    Json,
+    Router,
+    response::IntoResponse,
+    http::StatusCode,
+    extract::State,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use axum_extra::extract::cookie::{Cookie, PrivateCookieJar};
+
+use crate::{auth::jwt::Claims, config::AppState};
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct LoginRequest {
@@ -11,7 +20,7 @@ pub struct LoginRequest {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct LoginResponse {
-    pub token: String,
+    pub message: String,
 }
 
 #[utoipa::path(
@@ -23,23 +32,35 @@ pub struct LoginResponse {
         (status = 401, description = "Invalid credentials")
     )
 )]
-pub async fn login(Json(payload): Json<LoginRequest>) -> (StatusCode, Json<LoginResponse>) {
+pub async fn login(
+    State(_app_state): State<AppState>,
+    jar: PrivateCookieJar,
+    Json(payload): Json<LoginRequest>,
+) -> impl IntoResponse {
     tracing::info!("Login attempt for email: {}", payload.email);
     // TODO: Implement actual authentication logic
     if payload.email == "test@example.com" && payload.password == "password" {
-        (
-            StatusCode::OK,
-            Json(LoginResponse {
-                token: "<stub>".to_string(),
-            }),
-        )
+        let claims = Claims::new(
+            payload.email.clone(),
+            "org_a".to_string(), // Stub org_id
+            "admin".to_string(), // Stub role
+        );
+
+        let token = claims.encode().expect("Failed to encode JWT");
+
+        let mut cookie = Cookie::new("jwt_token", token);
+        cookie.set_http_only(true);
+        cookie.set_path("/");
+
+        let response = Json(LoginResponse {
+            message: "Login successful".to_string(),
+        }).into_response();
+        // Use jar.add() as PrivateCookieJar can infer the Key from AppState
+        (jar.add(cookie), response).into_response()
     } else {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(LoginResponse {
-                token: "invalid".to_string(),
-            }),
-        )
+        (jar, Json(LoginResponse {
+            message: "Invalid credentials".to_string(),
+        }).into_response()).into_response()
     }
 }
 
@@ -66,9 +87,11 @@ pub async fn forgot_password(Json(payload): Json<ForgotPasswordRequest>) -> Stat
         StatusCode::NOT_FOUND
     }
 }
- 
-pub fn routes() -> Router {
+
+pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/login", post(login))
         .route("/forgot-password", post(forgot_password))
+        // The AppState comes from the main router, not created here
+        // .with_state(AppState { cookie_key: crate::auth::jwt::COOKIE_SIGNING_KEY.clone() })
 }

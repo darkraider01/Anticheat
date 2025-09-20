@@ -6,9 +6,9 @@ use axum::{
     routing::get,
     Router,
 };
-use futures::StreamExt;
 use tracing::info;
-use crate::auth::api_key::AgentAuth;
+use crate::{auth::api_key::AgentAuth, config::AppState};
+
 
 pub async fn ws_dashboard(
     ws: WebSocketUpgrade,
@@ -24,12 +24,14 @@ async fn handle_socket(mut socket: WebSocket, agent_auth: AgentAuth) {
         if let Ok(msg) = msg {
             match msg {
                 Message::Text(t) => {
-                    info!("Received text message from org_id: {}: {:?}", agent_auth.org_id, t);
+                    info!("Received text message (length {}) from org_id: {}", t.len(), agent_auth.org_id);
                     // For now, just echo back with org_id context
-                    socket.send(Message::Text(format!("Org {}: You said: {}", agent_auth.org_id, t).into())).await.unwrap();
+                    if let Err(e) = socket.send(Message::Text(format!("Org {}: You said: {}", agent_auth.org_id, t).into())).await {
+                        info!("Error sending message: {}", e);
+                    }
                 }
                 Message::Binary(b) => {
-                    info!("Received binary message from org_id: {}: {:?}", agent_auth.org_id, b);
+                    info!("Received binary message (length {}) from org_id: {}", b.len(), agent_auth.org_id);
                 }
                 Message::Ping(p) => {
                     info!("Received ping from org_id: {}: {:?}", agent_auth.org_id, p);
@@ -49,6 +51,7 @@ async fn handle_socket(mut socket: WebSocket, agent_auth: AgentAuth) {
     }
 }
 
-pub fn routes() -> Router {
-    Router::new().route("/dashboard", get(ws_dashboard))
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/dashboard", get(ws_dashboard))
 }

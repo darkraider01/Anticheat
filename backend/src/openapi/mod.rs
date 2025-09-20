@@ -9,7 +9,7 @@ use crate::handlers; // Import handlers module
 
 use crate::handlers::{
     auth::{LoginRequest, LoginResponse},
-    dashboard_api::{Agent, Alert, Detection, PageMeta, PageParams},
+    dashboard_api::{Agent, Alert, Detection, PageParams},
     ingest::{IngestBatchRequest, IngestEvent},
 };
 
@@ -33,7 +33,6 @@ use crate::handlers::{
             IngestEvent,
             IngestBatchRequest,
             PageParams,
-            PageMeta,
             Detection,
             Agent,
             Alert,

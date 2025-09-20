@@ -3,15 +3,29 @@ use axum::{
     middleware::Next,
     response::Response,
     http::{Request, StatusCode},
+    extract::State,
 };
 use serde::{Deserialize, Serialize};
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm, encode, EncodingKey, Header};
 use once_cell::sync::Lazy;
+use axum_extra::extract::cookie::{PrivateCookieJar};
+use std::env;
+use tracing::error;
 
-const JWT_SECRET: &[u8] = b"your-secret-key"; // TODO: Load from environment variable
+use crate::config::AppState; // Import AppState
 
-static DECODING_KEY: Lazy<DecodingKey> = Lazy::new(|| DecodingKey::from_secret(JWT_SECRET));
-static ENCODING_KEY: Lazy<EncodingKey> = Lazy::new(|| EncodingKey::from_secret(JWT_SECRET));
+static JWT_SECRET_BYTES: Lazy<Vec<u8>> = Lazy::new(|| {
+    let secret = env::var("JWT_SECRET")
+        .expect("JWT_SECRET environment variable not set");
+    let bytes = secret.as_bytes().to_vec();
+    if bytes.len() < 32 {
+        panic!("JWT_SECRET must be at least 32 bytes long for security");
+    }
+    bytes
+});
+
+static DECODING_KEY: Lazy<DecodingKey> = Lazy::new(|| DecodingKey::from_secret(&JWT_SECRET_BYTES));
+static ENCODING_KEY: Lazy<EncodingKey> = Lazy::new(|| EncodingKey::from_secret(&JWT_SECRET_BYTES));
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
@@ -45,24 +59,45 @@ impl Claims {
     }
 }
 
-pub async fn jwt_middleware(mut req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
-    let auth_header = req.headers()
-        .get("Authorization")
-        .and_then(|header| header.to_str().ok());
+// Removed COOKIE_SIGNING_KEY from here, it's now in AppState
+// pub static COOKIE_SIGNING_KEY: Lazy<Key> = Lazy::new(|| {
+//     let secret = env::var("COOKIE_SECRET")
+//         .unwrap_or_else(|_| "super-secret-cookie-key-that-should-be-32-bytes-long".to_string()); // Fallback for development
+//     Key::from(secret.as_bytes())
+// });
 
-    let token = if let Some(header) = auth_header {
-        if header.starts_with("Bearer ") {
-            header.trim_start_matches("Bearer ").to_string()
-        } else {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-    } else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
+pub async fn jwt_middleware(
+    State(_app_state): State<AppState>, // Accept AppState
+    jar: PrivateCookieJar,
+    mut req: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let token = jar.get("jwt_token")
+        .map(|cookie| cookie.value().to_string())
+        .or_else(|| {
+            req.headers()
+                .get("Authorization")
+                .and_then(|header| header.to_str().ok())
+                .and_then(|header| {
+                    if header.starts_with("Bearer ") {
+                        Some(header.trim_start_matches("Bearer ").to_string())
+                    } else {
+                        None
+                    }
+                })
+        })
+        .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let claims = decode::<Claims>(&token, &DECODING_KEY, &Validation::new(Algorithm::HS512))
-        .map_err(|_| StatusCode::UNAUTHORIZED)?
-        .claims;
+    let claims = decode::<Claims>(
+        &token,
+        &DECODING_KEY,
+        &Validation::new(Algorithm::HS512),
+    )
+    .map_err(|e| {
+        error!("JWT decoding error: {:?}", e);
+        StatusCode::UNAUTHORIZED
+    })?
+    .claims;
 
     req.extensions_mut().insert(claims);
 

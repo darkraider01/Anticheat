@@ -1,17 +1,36 @@
-use axum::{routing::get, Router};
-use tower_http::trace::TraceLayer;
+use axum::{
+    middleware,
+    routing::{get},
+    Router,
+};
 
-use crate::{handlers, openapi};
+use crate::{
+    auth::{jwt::{jwt_middleware}, api_key::{api_key_middleware}},
+    handlers::{auth, dashboard_api, ingest, realtime},
+    config::AppState,
+};
+use axum::extract::State; // Keep State import for root route handler
 
-pub fn create_router() -> Router {
+pub fn create_router(app_state: AppState) -> Router {
+    let api_routes = dashboard_api::routes()
+        .layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            jwt_middleware,
+        ))
+        .with_state(app_state.clone());
+
+    let ingest_routes = ingest::routes()
+        .layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            api_key_middleware,
+        ))
+        .with_state(app_state.clone());
+
     Router::new()
-        .route("/healthz", get(handlers::healthz))
-        .route("/version", get(handlers::version))
-        .nest("/auth", handlers::auth::routes())
-        .nest("/ingest", handlers::ingest::routes().layer(axum::middleware::from_fn(crate::auth::api_key::api_key_middleware))) // with API-key middleware
-        .nest("/v1", handlers::dashboard_api::routes().layer(axum::middleware::from_fn(crate::auth::jwt::jwt_middleware))) // with JWT middleware
-        .nest("/ws", handlers::realtime::routes().layer(axum::middleware::from_fn(crate::auth::api_key::api_key_middleware)))
-        .route("/api-docs/openapi.json", get(openapi::serve_openapi)) // Serve OpenAPI JSON directly
-        // Removed Swagger UI routes due to dependency conflicts
-        .layer(TraceLayer::new_for_http())
+        .nest("/auth", auth::routes().with_state(app_state.clone()))
+        .nest("/v1", api_routes)
+        .nest("/ingest", ingest_routes)
+        .nest("/realtime", realtime::routes().with_state(app_state.clone()))
+        .route("/", get(|State(_app_state): State<AppState>| async { "Hello, World!" }))
+        .with_state(app_state)
 }

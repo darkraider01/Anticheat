@@ -4,8 +4,11 @@ use axum::{
     response::Response,
     body::Body,
     http::StatusCode,
+    extract::State,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::config::AppState;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentAuth {
@@ -13,7 +16,11 @@ pub struct AgentAuth {
     pub key_id: String,
 }
 
-pub async fn api_key_middleware(mut req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+pub async fn api_key_middleware(
+    State(_app_state): State<AppState>,
+    mut req: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
     let api_key = req.headers()
         .get("X-API-Key")
         .and_then(|header| header.to_str().ok());
