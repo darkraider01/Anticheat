@@ -1,0 +1,41 @@
+:root {
+    /* Colors */
+    --color-primary: #007bff;
+    --color-secondary: #6c757d;
+    --color-text: #343a40;
+    --color-background: #f8f9fa;
+    --color-border: #dee2e6;
+    --color-navbar-bg: #ffffff;
+    --color-navbar-text: #343a40;
+    --color-sidebar-bg: #343a40;
+    --color-sidebar-text: #f8f9fa;
+
+    --color-success-bg: #d4edda;
+    --color-success-text: #155724;
+    --color-success-border: #c3e6cb;
+
+    --color-error-bg: #f8d7da;
+    --color-error-text: #721c24;
+    --color-error-border: #f5c6cb;
+
+    /* Spacing */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+
+    /* Typography */
+    --font-family-base: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.25rem;
+    --font-size-xl: 1.5rem;
+
+    /* Borders */
+    --border-radius: 0.25rem;
+
+    /* Shadows */
+    --shadow-sm: 0 .125rem .25rem rgba(0,0,0,.075);
+    --shadow-md: 0 .5rem 1rem rgba(0,0,0,.15);
+}

@@ -1,44 +1,49 @@
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade}
+        ws::{Message, WebSocket, WebSocketUpgrade}, Extension
     },
     response::IntoResponse,
     routing::get,
     Router,
 };
-// No futures::stream::StreamExt import needed as it's not directly used here
+use futures::StreamExt;
 use tracing::info;
+use crate::auth::api_key::AgentAuth;
 
 pub async fn ws_dashboard(
     ws: WebSocketUpgrade,
+    Extension(agent_auth): Extension<AgentAuth>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket))
+    ws.on_upgrade(|socket| handle_socket(socket, agent_auth))
 }
 
-async fn handle_socket(mut socket: WebSocket) {
+async fn handle_socket(mut socket: WebSocket, agent_auth: AgentAuth) {
+    info!("WebSocket connection established for org_id: {}, key_id: {}", agent_auth.org_id, agent_auth.key_id);
+
     while let Some(msg) = socket.recv().await {
         if let Ok(msg) = msg {
             match msg {
                 Message::Text(t) => {
-                    info!("Client sent text: {:?}", t);
-                    socket.send(Message::Text(format!("You said: {}", t).into())).await.unwrap();
+                    info!("Received text message from org_id: {}: {:?}", agent_auth.org_id, t);
+                    // For now, just echo back with org_id context
+                    socket.send(Message::Text(format!("Org {}: You said: {}", agent_auth.org_id, t).into())).await.unwrap();
                 }
                 Message::Binary(b) => {
-                    info!("Client sent binary: {:?}", b);
+                    info!("Received binary message from org_id: {}: {:?}", agent_auth.org_id, b);
                 }
                 Message::Ping(p) => {
-                    info!("Client sent ping: {:?}", p);
+                    info!("Received ping from org_id: {}: {:?}", agent_auth.org_id, p);
                 }
                 Message::Pong(p) => {
-                    info!("Client sent pong: {:?}", p);
+                    info!("Received pong from org_id: {}: {:?}", agent_auth.org_id, p);
                 }
                 Message::Close(c) => {
-                    info!("Client sent close: {:?}", c);
+                    info!("WebSocket disconnected for org_id: {}: {:?}", agent_auth.org_id, c);
                     break;
                 }
             }
         } else {
-            // client disconnected
+            info!("Client disconnected for org_id: {}", agent_auth.org_id);
             return;
         }
     }

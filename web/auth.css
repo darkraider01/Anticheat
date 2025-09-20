@@ -1,10 +1,12 @@
+@import url("design-tokens.css");
+
 .auth-card {
     max-width: 400px;
-    margin: 50px auto;
+    margin: var(--spacing-xl) auto;
     padding: var(--spacing-lg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--color-border);
     border-radius: var(--border-radius);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-sm);
     background-color: white;
     text-align: center;
 }
@@ -12,7 +14,7 @@
 .auth-card h2 {
     margin-top: 0;
     margin-bottom: var(--spacing-lg);
-    color: var(--primary-color);
+    color: var(--color-primary);
 }
 
 .form-group {
@@ -24,27 +26,57 @@
     display: block;
     margin-bottom: var(--spacing-sm);
     font-weight: bold;
+    color: var(--color-text);
 }
 
 .form-group input[type="email"],
 .form-group input[type="password"] {
     width: 100%;
     padding: var(--spacing-sm);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--color-border);
     border-radius: var(--border-radius);
-    box-sizing: border-box; /* Include padding and border in the element's total width and height */
+    box-sizing: border-box;
+    font-size: var(--font-size-base);
+}
+
+.form-group input[type="email"]:focus,
+.form-group input[type="password"]:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-color: var(--color-primary);
+}
+
+.form-message {
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-sm);
+    border-radius: var(--border-radius);
+    font-size: var(--font-size-sm);
+    text-align: center;
+}
+
+.form-message.success {
+    background-color: var(--color-success-bg);
+    color: var(--color-success-text);
+    border: 1px solid var(--color-success-border);
+}
+
+.form-message.error {
+    background-color: var(--color-error-bg);
+    color: var(--color-error-text);
+    border: 1px solid var(--color-error-border);
 }
 
 .auth-card button {
     width: 100%;
     padding: var(--spacing-md);
-    background-color: var(--primary-color);
+    background-color: var(--color-primary);
     color: white;
     border: none;
     border-radius: var(--border-radius);
     cursor: pointer;
     font-size: var(--font-size-base);
     margin-top: var(--spacing-md);
+    transition: background-color 0.2s ease;
 }
 
 .auth-card button:hover {
@@ -53,10 +85,11 @@
 
 .auth-card p {
     margin-top: var(--spacing-lg);
+    color: var(--color-text);
 }
 
 .auth-card p a {
-    color: var(--primary-color);
+    color: var(--color-primary);
     text-decoration: none;
 }
 

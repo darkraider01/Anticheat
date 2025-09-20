@@ -43,6 +43,32 @@ pub async fn login(Json(payload): Json<LoginRequest>) -> (StatusCode, Json<Login
     }
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ForgotPasswordRequest {
+    pub email: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/auth/forgot-password",
+    request_body = ForgotPasswordRequest,
+    responses(
+        (status = 200, description = "Password reset email sent"),
+        (status = 404, description = "User not found")
+    )
+)]
+pub async fn forgot_password(Json(payload): Json<ForgotPasswordRequest>) -> StatusCode {
+    tracing::info!("Forgot password attempt for email: {}", payload.email);
+    // TODO: Implement actual forgot password logic (e.g., send email with reset link)
+    if payload.email == "test@example.com" {
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+ 
 pub fn routes() -> Router {
-    Router::new().route("/login", post(login))
+    Router::new()
+        .route("/login", post(login))
+        .route("/forgot-password", post(forgot_password))
 }

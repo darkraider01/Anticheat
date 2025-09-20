@@ -1,1 +1,1 @@
-// Models module (placeholder for now)
+pub mod organization;
