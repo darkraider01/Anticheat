@@ -18,7 +18,7 @@ pub async fn ws_dashboard(
 }
 
 async fn handle_socket(mut socket: WebSocket, agent_auth: AgentAuth) {
-    info!("WebSocket connection established for org_id: {}, key_id: {}", agent_auth.org_id, agent_auth.key_id);
+    info!("WebSocket connection established for org_id: {}, agent_id: {}", agent_auth.org_id, agent_auth.agent_id);
 
     while let Some(msg) = socket.recv().await {
         if let Ok(msg) = msg {

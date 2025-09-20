@@ -1,108 +1,160 @@
 use axum::{
-    extract::{Json, State, Extension},
-    routing::{post},
-    Router,
-    http::{StatusCode},
+    extract::Extension,
+    response::IntoResponse,
+    Json,
+    http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
-
+use chrono::{DateTime, Utc};
 use crate::{auth::api_key::AgentAuth, config::AppState};
-use std::collections::HashMap;
-
-#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
-pub struct IngestEvent {
-    #[validate(length(min = 1, message = "Event ID cannot be empty"))]
-    pub id: String,
-    #[validate(length(min = 1, message = "Agent ID cannot be empty"))]
-    pub agent_id: String,
-    pub timestamp: String,
-    #[validate(length(min = 1, message = "Event type cannot be empty"))]
-    pub event_type: String,
-    pub data: serde_json::Value,
-}
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct IngestBatchRequest {
-    #[validate(length(min = 1, message = "Events list cannot be empty"))]
-    pub events: Vec<IngestEvent>,
-    pub metadata: HashMap<String, String>,
+    #[validate(length(min = 1, max = 1000, message = "Events array must contain 1-1000 items"))]
+    pub events: Vec<DetectionEvent>,
+    pub heartbeat: Option<AgentHeartbeat>,
+}
+
+#[derive(Debug, Deserialize, Validate, ToSchema, Serialize)]
+pub struct DetectionEvent {
+    #[validate(length(min = 1, max = 100, message = "Event type must be 1-100 characters"))]
+    pub event_type: String,
+    
+    #[validate(length(min = 1, max = 50, message = "Severity must be specified"))]
+    pub severity: String,
+    
+    #[validate(length(max = 500, message = "Title too long"))]
+    pub title: Option<String>,
+    
+    #[validate(length(max = 2000, message = "Description too long"))]
+    pub description: Option<String>,
+    
+    pub metadata: serde_json::Value,
+    pub detected_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct AgentHeartbeat {
+    pub agent_version: String,
+    pub platform: String,
+    pub cpu_usage: Option<f32>,
+    pub memory_usage: Option<f32>,
+    pub last_scan_at: Option<DateTime<Utc>>,
+    pub scan_count: Option<u64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct IngestBatchResponse {
-    pub message: String,
-    pub ingested_count: usize,
-    pub failed_count: usize,
+pub struct IngestResponse {
+    pub success: bool,
+    pub processed: u32,
+    pub failed: u32,
+    pub errors: Vec<String>,
 }
 
+/// Ingest batch of detection events from agents
 #[utoipa::path(
     post,
-    path = "/v1/ingest",
+    path = "/ingest/batch",
     request_body = IngestBatchRequest,
     responses(
-        (status = 200, description = "Batch ingest successful", body = IngestBatchResponse),
-        (status = 400, description = "Invalid ingest request")
+        (status = 202, description = "Batch accepted for processing", body = IngestResponse),
+        (status = 400, description = "Invalid request format"),
+        (status = 401, description = "Invalid or missing API key"),
+        (status = 413, description = "Payload too large")
     ),
-    security(
-        ("api_key" = [])
-    )
+    security(("apiKeyAuth" = [])),
+    tag = "Ingest"
 )]
-pub async fn batch(
-    State(_app_state): State<AppState>, // Accept AppState
+pub async fn batch_ingest(
     Extension(agent_auth): Extension<AgentAuth>,
     Json(payload): Json<IngestBatchRequest>,
-) -> Result<Json<IngestBatchResponse>, StatusCode> {
-    if let Err(e) = payload.validate() {
-        tracing::warn!("Invalid ingest batch request: {:?}", e);
-        return Err(StatusCode::BAD_REQUEST);
+) -> Result<impl IntoResponse, StatusCode> {
+    // Validate the entire payload
+    if let Err(validation_errors) = payload.validate() {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(IngestResponse {
+                success: false,
+                processed: 0,
+                failed: payload.events.len() as u32,
+                errors: vec![format!("Validation failed: {:?}", validation_errors)],
+            })
+        ));
     }
 
+    let org_id = &agent_auth.org_id;
+    let agent_id = &agent_auth.agent_id;
+    
     tracing::info!(
-        "Ingest batch from agent {} (org_id: {}) with {} events",
-        agent_auth.key_id,
-        agent_auth.org_id,
-        payload.events.len()
+        "Processing {} events from agent {} in org {}",
+        payload.events.len(),
+        agent_id,
+        org_id
     );
 
-    let mut ingested_count = 0;
-    let mut failed_count = 0;
+    let mut processed = 0u32;
+    let mut failed = 0u32;
+    let mut errors = Vec::new();
 
-    for event in payload.events {
-        if event.agent_id != agent_auth.key_id {
-            tracing::warn!(
-                "Event agent_id mismatch: event.agent_id={} != api_key.agent_id={}",
-                event.agent_id,
-                agent_auth.key_id
-            );
-            failed_count += 1;
-            continue;
-        }
+    // Process each event
+    for event in &payload.events {
+        // Validate individual event
         if let Err(e) = event.validate() {
-            tracing::warn!("Invalid event in batch: {:?}", e);
-            failed_count += 1;
+            errors.push(format!("Event validation failed: {:?}", e));
+            failed += 1;
             continue;
         }
 
-        // Simulate processing and storing the event
-        tracing::debug!(
-            "Ingesting event: id={}, agent_id={}, event_type={}",
-            event.id,
-            event.agent_id,
-            event.event_type
+        // TODO: In production:
+        // 1. Store event in database with org_id and agent_id
+        // 2. Enqueue event ID for async rule processing
+        // 3. Publish to real-time channel for dashboard updates
+        
+        // For now, just log and increment counter
+        tracing::info!(
+            "Event processed: type={}, severity={}, org_id={}, agent_id={}",
+            event.event_type,
+            event.severity,
+            org_id,
+            agent_id
         );
-        ingested_count += 1;
+        
+        processed += 1;
     }
 
-    Ok(Json(IngestBatchResponse {
-        message: "Batch ingest processed".to_string(),
-        ingested_count,
-        failed_count,
-    }))
+    // Process heartbeat if present
+    if let Some(heartbeat) = &payload.heartbeat {
+        if let Err(e) = heartbeat.validate() {
+            errors.push(format!("Heartbeat validation failed: {:?}", e));
+        } else {
+            // TODO: Update agent status in database
+            tracing::info!(
+                "Agent heartbeat: version={}, platform={}, org_id={}, agent_id={}",
+                heartbeat.agent_version,
+                heartbeat.platform,
+                org_id,
+                agent_id
+            );
+        }
+    }
+
+    let success = failed == 0;
+    let status_code = if success { StatusCode::ACCEPTED } else { StatusCode::PARTIAL_CONTENT };
+
+    Ok((
+        status_code,
+        Json(IngestResponse {
+            success,
+            processed,
+            failed,
+            errors,
+        })
+    ))
 }
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/ingest", post(batch))
+pub fn routes() -> axum::Router<AppState> {
+    axum::Router::new()
+        .route("/batch", axum::routing::post(batch_ingest))
 }

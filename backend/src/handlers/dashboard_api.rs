@@ -1,183 +1,293 @@
 use axum::{
-    extract::{Query, State, Extension},
-    routing::{get},
-    Json, Router,
+    extract::{Query, Extension},
+    response::IntoResponse,
+    Json,
+    http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use validator::Validate;
+use chrono::{DateTime, Utc};
+use crate::{auth::jwt::Claims, config::AppState};
 
-use crate::{auth::jwt::Claims, config::AppState}; // Import AppState
+// Pagination and filtering types
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct PaginationParams {
+    #[validate(range(min = 1, max = 1000, message = "Page must be between 1 and 1000"))]
+    #[serde(default = "default_page")]
+    pub page: u32,
+    
+    #[validate(range(min = 1, max = 100, message = "Per page must be between 1 and 100"))]
+    #[serde(default = "default_per_page")]
+    pub per_page: u32,
+}
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct PageParams {
-    pub page: Option<u64>,
-    pub per_page: Option<u64>,
+fn default_page() -> u32 { 1 }
+fn default_per_page() -> u32 { 20 }
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PageMeta {
+    pub page: u32,
+    pub per_page: u32,
+    pub total: u64,
+    pub total_pages: u32,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PagedResponse<T> {
+    pub data: Vec<T>,
+    pub meta: PageMeta,
+}
+
+// Detection types
+#[derive(Debug, Deserialize, Validate, ToSchema, utoipa::IntoParams)]
+pub struct DetectionFilters {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    
+    pub severity: Option<String>,
+    pub agent_id: Option<String>,
+    pub detection_type: Option<String>,
+    pub start_date: Option<DateTime<Utc>>,
+    pub end_date: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Detection {
     pub id: String,
-    pub agent_id: String,
     pub org_id: String,
-    pub timestamp: String,
-    pub event_type: String,
+    pub agent_id: String,
+    pub detection_type: String,
     pub severity: String,
-    pub data: serde_json::Value,
+    pub title: String,
+    pub description: String,
+    pub metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// Agent types
+#[derive(Debug, Deserialize, Validate, ToSchema, utoipa::IntoParams)]
+pub struct AgentFilters {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    
+    pub status: Option<String>,
+    pub platform: Option<String>,
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Agent {
     pub id: String,
     pub org_id: String,
-    pub hostname: String,
-    pub last_seen: String,
+    pub name: String,
+    pub platform: String,
+    pub version: String,
     pub status: String,
+    pub last_heartbeat: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// Alert types
+#[derive(Debug, Deserialize, Validate, ToSchema, utoipa::IntoParams)]
+pub struct AlertFilters {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    
+    pub status: Option<String>,
+    pub severity: Option<String>,
+    pub rule_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Alert {
     pub id: String,
     pub org_id: String,
-    pub detection_ids: Vec<String>,
-    pub timestamp: String,
+    pub rule_id: String,
+    pub detection_id: String,
     pub severity: String,
     pub status: String,
+    pub title: String,
     pub description: String,
+    pub metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
+/// List detections with org-scoped access
 #[utoipa::path(
     get,
     path = "/v1/detections",
+    params(DetectionFilters),
     responses(
-        (status = 200, description = "List of detections", body = [Detection])
+        (status = 200, description = "Paginated list of detections", body = PagedResponse<Detection>),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid query parameters")
     ),
-    security(
-        ("jwt_token" = [])
-    )
+    security(("bearerAuth" = [])),
+    tag = "Detections"
 )]
 pub async fn list_detections(
-    State(_app_state): State<AppState>,
     Extension(claims): Extension<Claims>,
-    Query(params): Query<PageParams>,
-) -> Json<Vec<Detection>> {
-    tracing::info!("User {} from org {} requested detections", claims.sub, claims.org_id);
-
-    // RBAC: Only admin or viewer roles can list detections
-    if claims.role != "admin" && claims.role != "viewer" {
-        tracing::warn!("User {} with role {} attempted to access detections", claims.sub, claims.role);
-        return Json(vec![]); // Return empty for unauthorized
+    Query(filters): Query<DetectionFilters>,
+) -> Result<impl IntoResponse, StatusCode> {
+    // Validate query parameters
+    if let Err(_) = filters.validate() {
+        return Err(StatusCode::BAD_REQUEST);
     }
-
-    let page = params.page.unwrap_or(1);
-    let per_page = params.per_page.unwrap_or(10);
-
-    // Simulate fetching detections for the given org_id with pagination
-    let mut detections = vec![];
-    for i in 0..20 { // Simulate 20 detections
-        if i >= (page - 1) * per_page && i < page * per_page {
-            detections.push(Detection {
-                id: format!("det-{}", i),
-                agent_id: "agent-123".to_string(),
-                org_id: claims.org_id.clone(),
-                timestamp: "2023-01-01T12:00:00Z".to_string(),
-                event_type: "malware_detected".to_string(),
-                severity: "high".to_string(),
-                data: serde_json::json!({"file": "/tmp/malware.exe"}),
-            });
+    
+    // Enforce org-scoped access - all queries are automatically scoped by org_id from JWT
+    let org_id = &claims.org_id;
+    
+    // TODO: Replace with actual database query
+    // For now, return mock data filtered by org_id
+    let mock_detections = vec![
+        Detection {
+            id: "det_001".to_string(),
+            org_id: org_id.clone(),
+            agent_id: "agent_001".to_string(),
+            detection_type: "suspicious_process".to_string(),
+            severity: "high".to_string(),
+            title: "Suspicious AI Process Detected".to_string(),
+            description: "Detected ChatGPT API calls during gameplay".to_string(),
+            metadata: serde_json::json!({"process": "chatgpt.exe", "confidence": 0.95}),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         }
-    }
-    Json(detections)
+    ];
+    
+    let total = mock_detections.len() as u64;
+    let total_pages = ((total as f64) / (filters.pagination.per_page as f64)).ceil() as u32;
+    
+    let response = PagedResponse {
+        data: mock_detections,
+        meta: PageMeta {
+            page: filters.pagination.page,
+            per_page: filters.pagination.per_page,
+            total,
+            total_pages,
+        },
+    };
+    
+    Ok((StatusCode::OK, Json(response)))
 }
 
+/// List agents with org-scoped access
 #[utoipa::path(
     get,
     path = "/v1/agents",
+    params(AgentFilters),
     responses(
-        (status = 200, description = "List of agents", body = [Agent])
+        (status = 200, description = "Paginated list of agents", body = PagedResponse<Agent>),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid query parameters")
     ),
-    security(
-        ("jwt_token" = [])
-    )
+    security(("bearerAuth" = [])),
+    tag = "Agents"
 )]
 pub async fn list_agents(
-    State(_app_state): State<AppState>,
     Extension(claims): Extension<Claims>,
-    Query(params): Query<PageParams>,
-) -> Json<Vec<Agent>> {
-    tracing::info!("User {} from org {} requested agents", claims.sub, claims.org_id);
-
-    // RBAC: Only admin roles can list agents
-    if claims.role != "admin" {
-        tracing::warn!("User {} with role {} attempted to access agents", claims.sub, claims.role);
-        return Json(vec![]); // Return empty for unauthorized
+    Query(filters): Query<AgentFilters>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if let Err(_) = filters.validate() {
+        return Err(StatusCode::BAD_REQUEST);
     }
-
-    let page = params.page.unwrap_or(1);
-    let per_page = params.per_page.unwrap_or(10);
-
-    // Simulate fetching agents for the given org_id with pagination
-    let mut agents = vec![];
-    for i in 0..5 { // Simulate 5 agents
-        if i >= (page - 1) * per_page && i < page * per_page {
-            agents.push(Agent {
-                id: format!("agent-{}", i),
-                org_id: claims.org_id.clone(),
-                hostname: format!("host-{}", i),
-                last_seen: "2023-01-01T12:00:00Z".to_string(),
-                status: "online".to_string(),
-            });
+    
+    let org_id = &claims.org_id;
+    
+    // TODO: Replace with actual database query
+    let mock_agents = vec![
+        Agent {
+            id: "agent_001".to_string(),
+            org_id: org_id.clone(),
+            name: "Game Server #1".to_string(),
+            platform: "Windows".to_string(),
+            version: "1.0.0".to_string(),
+            status: "online".to_string(),
+            last_heartbeat: Some(Utc::now()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         }
-    }
-    Json(agents)
+    ];
+    
+    let total = mock_agents.len() as u64;
+    let total_pages = ((total as f64) / (filters.pagination.per_page as f64)).ceil() as u32;
+    
+    let response = PagedResponse {
+        data: mock_agents,
+        meta: PageMeta {
+            page: filters.pagination.page,
+            per_page: filters.pagination.per_page,
+            total,
+            total_pages,
+        },
+    };
+    
+    Ok((StatusCode::OK, Json(response)))
 }
 
+/// List alerts with org-scoped access
 #[utoipa::path(
     get,
     path = "/v1/alerts",
+    params(AlertFilters),
     responses(
-        (status = 200, description = "List of alerts", body = [Alert])
+        (status = 200, description = "Paginated list of alerts", body = PagedResponse<Alert>),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid query parameters")
     ),
-    security(
-        ("jwt_token" = [])
-    )
+    security(("bearerAuth" = [])),
+    tag = "Alerts"
 )]
 pub async fn list_alerts(
-    State(_app_state): State<AppState>,
     Extension(claims): Extension<Claims>,
-    Query(params): Query<PageParams>,
-) -> Json<Vec<Alert>> {
-    tracing::info!("User {} from org {} requested alerts", claims.sub, claims.org_id);
-
-    // RBAC: Only admin roles can list alerts
-    if claims.role != "admin" {
-        tracing::warn!("User {} with role {} attempted to access alerts", claims.sub, claims.role);
-        return Json(vec![]); // Return empty for unauthorized
+    Query(filters): Query<AlertFilters>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if let Err(_) = filters.validate() {
+        return Err(StatusCode::BAD_REQUEST);
     }
-
-    let page = params.page.unwrap_or(1);
-    let per_page = params.per_page.unwrap_or(10);
-
-    // Simulate fetching alerts for the given org_id with pagination
-    let mut alerts = vec![];
-    for i in 0..10 { // Simulate 10 alerts
-        if i >= (page - 1) * per_page && i < page * per_page {
-            alerts.push(Alert {
-                id: format!("alert-{}", i),
-                org_id: claims.org_id.clone(),
-                detection_ids: vec![format!("det-{}", i * 2)],
-                timestamp: "2023-01-01T12:00:00Z".to_string(),
-                severity: "critical".to_string(),
-                status: "open".to_string(),
-                description: format!("Malware alert for agent-{}", i),
-            });
+    
+    let org_id = &claims.org_id;
+    
+    // TODO: Replace with actual database query
+    let mock_alerts = vec![
+        Alert {
+            id: "alert_001".to_string(),
+            org_id: org_id.clone(),
+            rule_id: "rule_001".to_string(),
+            detection_id: "det_001".to_string(),
+            severity: "high".to_string(),
+            status: "new".to_string(),
+            title: "High Severity Detection".to_string(),
+            description: "Multiple suspicious processes detected".to_string(),
+            metadata: serde_json::json!({"count": 5, "threshold": 3}),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         }
-    }
-    Json(alerts)
+    ];
+    
+    let total = mock_alerts.len() as u64;
+    let total_pages = ((total as f64) / (filters.pagination.per_page as f64)).ceil() as u32;
+    
+    let response = PagedResponse {
+        data: mock_alerts,
+        meta: PageMeta {
+            page: filters.pagination.page,
+            per_page: filters.pagination.per_page,
+            total,
+            total_pages,
+        },
+    };
+    
+    Ok((StatusCode::OK, Json(response)))
 }
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/detections", get(list_detections))
-        .route("/agents", get(list_agents))
-        .route("/alerts", get(list_alerts))
+pub fn routes() -> axum::Router<AppState> {
+    axum::Router::new()
+        .route("/detections", axum::routing::get(list_detections))
+        .route("/agents", axum::routing::get(list_agents))
+        .route("/alerts", axum::routing::get(list_alerts))
 }
+

@@ -1,25 +1,25 @@
+use config::ConfigError;
 use serde::Deserialize;
-use config as config_crate;
 
 #[derive(Debug, Deserialize)]
-pub struct Application {
-    pub host: String,
+pub struct Settings {
+    pub database_url: String,
+    pub redis_url: String,
+    pub jwt_secret: String,
+    pub api_key_prefix: String,
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Configuration {
-    pub application: Application,
-}
-
-pub fn config() -> Result<Configuration, config_crate::ConfigError> {
-    let base_path = std::env::current_dir().expect("Failed to determine current directory");
+pub fn get_configuration() -> Result<Settings, ConfigError> {
+    let base_path = std::env::current_dir()
+        .map_err(|e| ConfigError::Message(format!("Failed to determine current directory: {}", e)))?;
     let configuration_directory = base_path.join("configuration");
 
-    let mut settings = config_crate::Config::new();
-    settings
-        .merge(config_crate::File::from(configuration_directory.join("base")).required(true))?
-        .merge(config_crate::Environment::with_prefix("APP").separator("__"))?;
+    // Updated to use new config crate API
+    let settings = config::Config::builder()
+        .add_source(config::File::from(configuration_directory.join("base.toml")).required(false))
+        .add_source(config::Environment::with_prefix("APP").separator("__"))
+        .build()?;
 
-    settings.try_into()
+    settings.try_deserialize()
 }

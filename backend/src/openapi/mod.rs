@@ -1,87 +1,81 @@
-use axum::Json;
-use utoipa::{
-    openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
-    Modify, OpenApi,
-};
-use axum::http::StatusCode;
-
-use crate::handlers; // Import handlers module
-
-use crate::handlers::{
-    auth::{LoginRequest, LoginResponse},
-    dashboard_api::{Agent, Alert, Detection, PageParams},
-    ingest::{IngestBatchRequest, IngestEvent},
-};
+use axum::{response::IntoResponse, Json};
+use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        handlers::healthz,
-        handlers::version,
-        handlers::auth::login,
-        handlers::ingest::batch,
-        handlers::dashboard_api::list_detections,
-        handlers::dashboard_api::list_agents,
-        handlers::dashboard_api::list_alerts,
+        crate::handlers::auth::login,
+        crate::handlers::ingest::batch_ingest,
+        crate::handlers::dashboard_api::list_detections,
+        crate::handlers::dashboard_api::list_agents,
+        crate::handlers::dashboard_api::list_alerts,
+        crate::handlers::healthz,
+        crate::handlers::version,
     ),
     components(
         schemas(
-            handlers::HealthzResponse,
-            handlers::VersionResponse,
-            LoginRequest,
-            LoginResponse,
-            IngestEvent,
-            IngestBatchRequest,
-            PageParams,
-            Detection,
-            Agent,
-            Alert,
+            // Auth schemas
+            crate::handlers::auth::LoginRequest,
+            crate::handlers::auth::LoginResponse,
+            crate::handlers::auth::UserInfo,
+            
+            // Ingest schemas
+            crate::handlers::ingest::IngestBatchRequest,
+            crate::handlers::ingest::DetectionEvent,
+            crate::handlers::ingest::AgentHeartbeat,
+            crate::handlers::ingest::IngestResponse,
+            
+            // Dashboard schemas
+            crate::handlers::dashboard_api::PaginationParams,
+            crate::handlers::dashboard_api::PageMeta,
+            crate::handlers::dashboard_api::Detection,
+            crate::handlers::dashboard_api::DetectionFilters,
+            crate::handlers::dashboard_api::Agent,
+            crate::handlers::dashboard_api::AgentFilters,
+            crate::handlers::dashboard_api::Alert,
+            crate::handlers::dashboard_api::AlertFilters,
+            
+            // Common schemas
+            crate::handlers::HealthzResponse,
+            crate::handlers::VersionResponse,
         )
     ),
-    tags(
-        (name = "AIGuard", description = "AIGuard API endpoints")
-    ),
     modifiers(&SecurityAddon),
-    security(
-        ("bearerAuth" = []),
-        ("apiKeyAuth" = [])
+    tags(
+        (name = "Authentication", description = "User authentication and session management"),
+        (name = "Ingest", description = "Agent data ingestion endpoints"),
+        (name = "Detections", description = "Detection management and querying"),
+        (name = "Agents", description = "Agent fleet management"),
+        (name = "Alerts", description = "Alert management and workflow"),
     )
 )]
 pub struct ApiDoc;
 
 struct SecurityAddon;
 
-impl Modify for SecurityAddon {
+impl utoipa::Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
-        if let Some(components) = openapi.components.as_mut() {
-            components.add_security_scheme(
-                "bearerAuth",
-                SecurityScheme::Http(
-                    HttpBuilder::new()
-                        .scheme(HttpAuthScheme::Bearer)
-                        .bearer_format("JWT")
-                        .build(),
-                ),
-            );
-            components.add_security_scheme(
-                "apiKeyAuth",
-                SecurityScheme::ApiKey(
-                    utoipa::openapi::security::ApiKey::Header(
-                        utoipa::openapi::security::ApiKeyValue::new("X-API-Key"),
-                    ),
-                ),
-            );
-        }
+        use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme, ApiKeyValue, ApiKey};
+        
+        let components = openapi.components.as_mut().unwrap();
+        
+        components.add_security_scheme(
+            "bearerAuth",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .build(),
+            ),
+        );
+        
+        components.add_security_scheme(
+            "apiKeyAuth",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-API-Key"))),
+        );
     }
 }
 
-pub async fn serve_openapi() -> impl axum::response::IntoResponse {
+pub async fn serve_openapi() -> impl IntoResponse {
     Json(ApiDoc::openapi())
-}
-
-pub fn routes() -> impl axum::response::IntoResponse {
-    // This function will no longer return SwaggerUi directly.
-    // The Swagger UI will not be served by the Rust backend due to dependency conflicts.
-    // OpenAPI JSON will still be available at /api-docs/openapi.json
-    StatusCode::NOT_FOUND // This was a placeholder, will be replaced once SwaggerUi issue is resolved
 }

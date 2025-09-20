@@ -1,97 +1,120 @@
 use axum::{
-    routing::post,
+    extract::{State},
+    response::{IntoResponse, Response},
     Json,
-    Router,
-    response::IntoResponse,
     http::StatusCode,
-    extract::State,
 };
+use axum_extra::extract::{CookieJar, cookie::Cookie};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use axum_extra::extract::cookie::{Cookie, PrivateCookieJar};
-
+use validator::Validate;
 use crate::{auth::jwt::Claims, config::AppState};
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
+    #[validate(email(message = "Invalid email format"))]
     pub email: String,
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
     pub password: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct LoginResponse {
+    pub success: bool,
     pub message: String,
+    pub user: Option<UserInfo>,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UserInfo {
+    pub id: String,
+    pub email: String,
+    pub org_id: String,
+    pub role: String,
+}
+
+/// Login endpoint that authenticates users and sets JWT cookie
 #[utoipa::path(
     post,
     path = "/auth/login",
     request_body = LoginRequest,
     responses(
         (status = 200, description = "Login successful", body = LoginResponse),
-        (status = 401, description = "Invalid credentials")
-    )
+        (status = 401, description = "Invalid credentials"),
+        (status = 400, description = "Invalid request format")
+    ),
+    tag = "Authentication"
 )]
 pub async fn login(
-    State(_app_state): State<AppState>,
-    jar: PrivateCookieJar,
+    State(app_state): State<AppState>,
+    jar: CookieJar,
     Json(payload): Json<LoginRequest>,
-) -> impl IntoResponse {
-    tracing::info!("Login attempt for email: {}", payload.email);
-    // TODO: Implement actual authentication logic
-    if payload.email == "test@example.com" && payload.password == "password" {
-        let claims = Claims::new(
-            payload.email.clone(),
-            "org_a".to_string(), // Stub org_id
-            "admin".to_string(), // Stub role
-        );
+) -> Result<impl IntoResponse, Response> {
+    // Validate input
+    if let Err(validation_errors) = payload.validate() {
+        return Ok((
+            jar,
+            (StatusCode::BAD_REQUEST, Json(LoginResponse {
+                success: false,
+                message: format!("Validation failed: {:?}", validation_errors),
+                user: None,
+            }))
+        ));
+    }
 
-        let token = claims.encode().expect("Failed to encode JWT");
-
-        let mut cookie = Cookie::new("jwt_token", token);
-        cookie.set_http_only(true);
-        cookie.set_path("/");
-
-        let response = Json(LoginResponse {
-            message: "Login successful".to_string(),
-        }).into_response();
-        // Use jar.add() as PrivateCookieJar can infer the Key from AppState
-        (jar.add(cookie), response).into_response()
+    // For demo purposes - replace with actual user authentication
+    // In production, verify against database with hashed passwords
+    if payload.email == "demo@cluelyguard.com" && payload.password == "demo123456" {
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let org_id = "demo_org_001".to_string();
+        let role = "admin".to_string();
+        
+        let claims = Claims::new(user_id.clone(), org_id.clone(), role.clone());
+        
+        match claims.encode(&app_state.jwt_secret) {
+            Ok(token) => {
+                let mut cookie = Cookie::new("jwt_token", token);
+                cookie.set_http_only(true);
+                cookie.set_path("/");
+                cookie.set_secure(true); // Secure flag for HTTPS
+                cookie.set_same_site(axum_extra::extract::cookie::SameSite::Strict);
+                cookie.set_max_age(time::Duration::hours(24));
+                
+                let jar = jar.add(cookie);
+                
+                Ok((
+                    jar,
+                    (StatusCode::OK, Json(LoginResponse {
+                        success: true,
+                        message: "Login successful".to_string(),
+                        user: Some(UserInfo {
+                            id: user_id,
+                            email: payload.email,
+                            org_id,
+                            role,
+                        }),
+                    }))
+                ))
+            }
+            Err(e) => {
+                tracing::error!("Failed to encode JWT: {}", e);
+                Ok((jar, (StatusCode::INTERNAL_SERVER_ERROR, Json(LoginResponse {
+                    success: false,
+                    message: "Authentication failed".to_string(),
+                    user: None,
+                }))))
+            }
+        }
     } else {
-        (jar, Json(LoginResponse {
-            message: "Invalid credentials".to_string(),
-        }).into_response()).into_response()
+        Ok((jar, (StatusCode::UNAUTHORIZED, Json(LoginResponse {
+            success: false,
+            message: "Invalid email or password".to_string(),
+            user: None,
+        }))))
     }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct ForgotPasswordRequest {
-    pub email: String,
-}
-
-#[utoipa::path(
-    post,
-    path = "/auth/forgot-password",
-    request_body = ForgotPasswordRequest,
-    responses(
-        (status = 200, description = "Password reset email sent"),
-        (status = 404, description = "User not found")
-    )
-)]
-pub async fn forgot_password(Json(payload): Json<ForgotPasswordRequest>) -> StatusCode {
-    tracing::info!("Forgot password attempt for email: {}", payload.email);
-    // TODO: Implement actual forgot password logic (e.g., send email with reset link)
-    if payload.email == "test@example.com" {
-        StatusCode::OK
-    } else {
-        StatusCode::NOT_FOUND
-    }
-}
-
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/login", post(login))
-        .route("/forgot-password", post(forgot_password))
-        // The AppState comes from the main router, not created here
-        // .with_state(AppState { cookie_key: crate::auth::jwt::COOKIE_SIGNING_KEY.clone() })
+pub fn routes() -> axum::Router<AppState> {
+    axum::Router::new()
+        .route("/login", axum::routing::post(login))
 }
