@@ -132,12 +132,3 @@ curl -H "Authorization: Bearer <YOUR_DUMMY_JWT_TOKEN>" http://localhost:3000/v1/
 ## Frontend
 
 Open `web/index.html` and `web/login.html` directly in your browser to view the static frontend.
-
-## Day 2 Checklist
-
-- [ ] Implement actual database calls (e.g., DB ping in `/healthz`).
-- [ ] Implement JWT validation with HS256/RS256.
-- [ ] Implement API-key lookup and validation.
-- [ ] Wire pagination to actual database queries for dashboard APIs.
-- [ ] Add more comprehensive tests for all endpoints and middleware.
-- [ ] Implement WebSocket actual logic in `/ws/dashboard`.
