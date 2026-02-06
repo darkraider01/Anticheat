@@ -20,7 +20,7 @@ pub fn create_router(app_state: AppState) -> Router {
         .nest("/v1", api_routes)
         .nest("/ingest", ingest_routes)
         .nest("/realtime", handlers::realtime::routes())
-        .route("/", get(|axum::extract::State(_app_state): axum::extract::State<AppState>| async { "CluelyGuard API v1.0" }))
+
         .route("/healthz", get(handlers::healthz))
         .route("/version", get(handlers::version))
         .route("/api-docs/openapi.json", get(openapi::serve_openapi))

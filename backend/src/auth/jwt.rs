@@ -49,8 +49,11 @@ impl Claims {
     }
 }
 
+use axum_extra::extract::CookieJar;
+
 pub async fn jwt_middleware(
     State(app_state): State<AppState>,
+    jar: CookieJar,
     mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
@@ -64,6 +67,8 @@ pub async fn jwt_middleware(
         } else {
             return Err(StatusCode::UNAUTHORIZED);
         }
+    } else if let Some(cookie) = jar.get("jwt_token") {
+        cookie.value()
     } else {
         return Err(StatusCode::UNAUTHORIZED);
     };

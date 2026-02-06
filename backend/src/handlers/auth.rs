@@ -52,11 +52,13 @@ pub async fn login(
 ) -> Result<impl IntoResponse, Response> {
     // Validate input
     if let Err(validation_errors) = payload.validate() {
+        // Log detailed errors for debugging, but return generic message to user
+        tracing::warn!("Login validation failed: {:?}", validation_errors);
         return Ok((
             jar,
             (StatusCode::BAD_REQUEST, Json(LoginResponse {
                 success: false,
-                message: format!("Validation failed: {:?}", validation_errors),
+                message: "Invalid request format".to_string(),
                 user: None,
             }))
         ));

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AIGuard Dashboard</title>
+    <title>Alerts - AIGuard</title>
     <link rel="stylesheet" href="design-tokens.css">
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -16,29 +16,26 @@
             </div>
             <nav class="sidebar-nav">
                 <ul>
-                    <li><a href="index.html" class="active">Overview/Live</a></li>
+                    <li><a href="index.html">Overview/Live</a></li>
                     <li><a href="agents.html">Agents</a></li>
-                    <li><a href="alerts.html">Alerts</a></li>
+                    <li><a href="alerts.html" class="active">Alerts</a></li>
                 </ul>
             </nav>
         </aside>
         <div class="main-content">
             <header class="navbar">
-                <h1>AIGuard</h1>
+                <h1>AIGuard Check</h1>
                 <nav>
-                    <a href="#">Dashboard</a>
-                    <a href="#">Detections</a>
-                    <a href="#">Agents</a>
-                    <a href="#">Alerts</a>
-                    <a href="#">Settings</a>
+                    <a href="index.html">Dashboard</a>
+                    <a href="agents.html">Agents</a>
+                    <a href="alerts.html">Alerts</a>
                 </nav>
             </header>
             <main>
-                <section class="live-detections">
-                    <h2>Live Detections</h2>
+                <section class="alerts-list">
+                    <h2>Recent Alerts</h2>
                     <div class="empty-state">
-                        <p>No live detections at the moment.</p>
-                        <p>Monitor your game servers for suspicious activity.</p>
+                        <p>Loading alerts...</p>
                     </div>
                 </section>
             </main>

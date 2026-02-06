@@ -42,6 +42,24 @@ This is the Day 1 implementation of the AIGuard MVP, a pragmatic monolith in Rus
     └── styles.css
 ```
 
+## Screenshots
+
+### Dashboard
+
+![Dashboard](docs/images/dashboard.png)
+
+### Active Agents
+
+![Agents](docs/images/agents.png)
+
+### Alerts
+
+![Alerts](docs/images/alerts.png)
+
+### Client SDK (Terminal Output)
+
+![Client SDK](docs/images/client_sdk.png)
+
 ## Quick Start
 
 1.  **Clone the repository:**
@@ -117,9 +135,9 @@ Open `web/index.html` and `web/login.html` directly in your browser to view the 
 
 ## Day 2 Checklist
 
-*   [ ] Implement actual database calls (e.g., DB ping in `/healthz`).
-*   [ ] Implement JWT validation with HS256/RS256.
-*   [ ] Implement API-key lookup and validation.
-*   [ ] Wire pagination to actual database queries for dashboard APIs.
-*   [ ] Add more comprehensive tests for all endpoints and middleware.
-*   [ ] Implement WebSocket actual logic in `/ws/dashboard`.
+- [ ] Implement actual database calls (e.g., DB ping in `/healthz`).
+- [ ] Implement JWT validation with HS256/RS256.
+- [ ] Implement API-key lookup and validation.
+- [ ] Wire pagination to actual database queries for dashboard APIs.
+- [ ] Add more comprehensive tests for all endpoints and middleware.
+- [ ] Implement WebSocket actual logic in `/ws/dashboard`.

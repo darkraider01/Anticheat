@@ -73,13 +73,14 @@ pub async fn batch_ingest(
 ) -> Result<impl IntoResponse, StatusCode> {
     // Validate the entire payload
     if let Err(validation_errors) = payload.validate() {
+        tracing::warn!("Ingest validation failed: {:?}", validation_errors);
         return Ok((
             StatusCode::BAD_REQUEST,
             Json(IngestResponse {
                 success: false,
                 processed: 0,
                 failed: payload.events.len() as u32,
-                errors: vec![format!("Validation failed: {:?}", validation_errors)],
+                errors: vec!["Invalid request format".to_string()],
             })
         ));
     }
@@ -102,7 +103,8 @@ pub async fn batch_ingest(
     for event in &payload.events {
         // Validate individual event
         if let Err(e) = event.validate() {
-            errors.push(format!("Event validation failed: {:?}", e));
+            tracing::warn!("Event validation failed: {:?}", e);
+            errors.push("Invalid event format".to_string());
             failed += 1;
             continue;
         }
@@ -127,7 +129,8 @@ pub async fn batch_ingest(
     // Process heartbeat if present
     if let Some(heartbeat) = &payload.heartbeat {
         if let Err(e) = heartbeat.validate() {
-            errors.push(format!("Heartbeat validation failed: {:?}", e));
+            tracing::warn!("Heartbeat validation failed: {:?}", e);
+            errors.push("Invalid heartbeat format".to_string());
         } else {
             // TODO: Update agent status in database
             tracing::info!(

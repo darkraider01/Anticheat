@@ -1,6 +1,6 @@
 use axum::Router;
 use axum_extra::extract::cookie::Key;
-use tower_http::{trace::TraceLayer, cors::CorsLayer};
+use tower_http::{trace::TraceLayer, cors::CorsLayer, services::ServeDir};
 use tower::ServiceBuilder;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -8,6 +8,7 @@ use anticheat::{router, telemetry, config::AppState};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
     telemetry::init();
 
     // Load configuration - fail fast if required env vars missing
@@ -39,11 +40,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cookie_key = Key::from(cookie_secret.as_bytes());
     let app_state = AppState::new(cookie_key, jwt_secret, api_key_prefix);
 
-    // Secure CORS configuration
-    let allowed_origins = [
-        "http://localhost:3000".parse()?,
-        "https://app.cluelyguard.com".parse()?,
-    ];
+    // Environment-based CORS configuration
+    let allowed_origins_str = std::env::var("ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+    
+    let allowed_origins: Vec<_> = allowed_origins_str
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    
+    if allowed_origins.is_empty() {
+        panic!("No valid CORS origins configured");
+    }
+    
+    tracing::info!("CORS allowed origins: {:?}", allowed_origins_str);
     
     let cors = CorsLayer::new()
         .allow_methods([
@@ -60,12 +70,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ])
         .allow_credentials(true);
 
+    // TODO: Implement custom rate limiting middleware
+    // tower-governor has compatibility issues with current Axum version
+    // Consider implementing a custom solution using Arc<Mutex<HashMap>> for IP tracking
+
+    // Request body size limit (10MB default)
+    let max_request_size: usize = std::env::var("MAX_REQUEST_SIZE")
+        .unwrap_or_else(|_| "10485760".to_string())
+        .parse()
+        .expect("MAX_REQUEST_SIZE must be a valid number");
+
     let app = Router::new()
         .merge(router::create_router(app_state))
+        .fallback_service(ServeDir::new("../web"))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(cors)
+                .layer(axum::extract::DefaultBodyLimit::max(max_request_size))
         );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
